@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "lint:md": "markdownlint-cli2",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.md": "markdownlint-cli2 --no-globs"
   },
   "keywords": [],
   "author": "",
@@ -11,5 +15,10 @@
   "description": "",
   "dependencies": {
     "zenn-cli": "^0.5.2"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "markdownlint-cli2": "^0.22.1"
   }
 }

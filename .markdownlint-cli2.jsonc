@@ -1,0 +1,10 @@
+{
+  "globs": ["**/*.md"],
+  "ignores": ["node_modules/**"],
+  "config": {
+    // 日本語の本文は 80 文字で折り返さない
+    "MD013": false,
+    // Zenn では引用として URL をそのまま置くことが多い
+    "MD034": false
+  }
+}
