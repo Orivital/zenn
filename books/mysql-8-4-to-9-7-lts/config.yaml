@@ -1,7 +1,7 @@
 title: "MySQL 9.7 LTS は 8.4 LTS から何が変わったか"
 summary: "8.4 LTS から 9.7 LTS までに追加・非推奨・削除された機能を、手元で動かしながら整理する。"
 topics: ["mysql", "database", "lts"]
-published: false
+published: true
 price: 0
 chapters:
   - overview
