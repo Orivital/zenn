@@ -1,0 +1,26 @@
+---
+description: このリポジトリでは GitHub issue を作らない。レビュー findings はチャットに書くだけ。
+alwaysApply: true
+---
+
+# GitHub issue を作らない
+
+このプロジェクト（Zenn 記事リポジトリ）では **GitHub issue を作成しない**。
+
+ユーザーのグローバルルール（レビュー後の issue 化）より、このルールを優先する。
+
+## やること
+
+- レビュー findings はチャットで報告して終わる
+- 必須の正しさ・誤記だけ、ユーザーが直してよい範囲ならその場で直す
+- 改善提案はチャットに書く。issue にはしない
+
+## やらないこと
+
+- `gh issue create` や GitHub 上での issue 作成
+- findings の issue 化、まとめ issue、Parent / child リンク
+
+```text
+❌ BAD: レビューの残りを GitHub issue にする
+✅ GOOD: 指摘はチャットに書き、issue は作らない
+```
