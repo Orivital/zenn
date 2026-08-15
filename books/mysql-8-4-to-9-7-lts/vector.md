@@ -24,7 +24,7 @@ MySQL 9.0 から VECTOR 型（The VECTOR Type）が出ました。浮動小数�
 ## ユースケース
 
 **セマンティック検索**
-「返品のやり方」で検索して、「返品ポリシー」「交換手続き」のような、文言が違う文書も拾うことを狙う。
+ユーザーは「買ったものをメーカーに送り返したい」と聞く。FAQ の見出しは「返品ポリシー」で、本文も「返品」と書いてある。同じことを言っているが、文字列は一致しない。このずれを埋める。
 
 **RAG（社内データ付きのチャット）**
 質問に近い社内 PDF / マニュアルを先に取り出し、その抜粋を LLM に渡して答える。公開データだけで訓練された LLM に、自社データを足すための仕組み。
@@ -37,11 +37,12 @@ FAQ やチケット履歴をベクトル化して、自然言語の問い合わ�
 
 ## VECTOR はどう役立つか
 
-例えば、上記で挙げた「セマンティック検索」は VECTOR でどのように役立つか、次の検証で動かします。
-通常の検索（`LIKE` や `FULLTEXT`）は文字列を見ます。「返品のやり方」という句ではヒットしません。`LIKE '%返品%'` なら返品ポリシーは出ますが、交換手続きは出ません。
+次の検証では、上のセマンティック検索を手元で動かします。
+
+通常の検索（`LIKE` や `FULLTEXT`）は文字列を見ます。「買ったものをメーカーに送り返したい」という句ではヒットしません。`LIKE '%返品%'` なら返品ポリシーは出ますが、ユーザーは「返品」と書いていません。FAQ と同じ語を使う前提です。
 
 セマンティック検索は、文章を **埋め込み（embedding）** という数値の並びに変換します。
-埋め込みモデルは「近い意味は近い位置」に置くので、「返品のやり方」と「返品ポリシー」はベクトル空間上で近くなります。
+埋め込みモデルは「近い意味は近い位置」に置くので、「メーカーに送り返したい」と「返品ポリシー」はベクトル空間上で近くなります。
 VECTOR 型は、その数値の並びを列として持つための型です。
 
 流れはこうです。
@@ -71,7 +72,7 @@ docker run --name mysql97-vector-demo \
 docker exec -it -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 mysql97-vector-demo mysql -uroot -pdemo vecdemo
 ```
 
-返品に関する FAQ のテーブルを作成します。
+ネットショップの FAQ テーブルを作成します。
 
 ```sql
 CREATE TABLE faqs (
@@ -90,13 +91,23 @@ INSERT INTO faqs (title, body) VALUES
   ('支払い方法', 'クレジットカードとコンビニ払いが使えます。');
 ```
 
-実際に LIKE すると、「返品のやり方」は 0 件、「返品」は返品ポリシーだけです。
+問い合わせの文言そのものでは、どちらも 0 件です。
 
 ```text
 mysql> SELECT id, title FROM faqs
-    -> WHERE title LIKE '%返品のやり方%' OR body LIKE '%返品のやり方%';
-Empty set (0.011 sec)
+    -> WHERE title LIKE '%買ったものをメーカーに送り返したい%'
+    ->    OR body LIKE '%買ったものをメーカーに送り返したい%';
+Empty set (0.000 sec)
 ```
+
+```text
+mysql> SELECT id, title FROM faqs
+    -> WHERE title LIKE '%色違いが届いた%'
+    ->    OR body LIKE '%色違いが届いた%';
+Empty set (0.000 sec)
+```
+
+FAQ 側の語「返品」なら当たります。ただしユーザーの問い合わせには、その語は出てきません。
 
 ```text
 mysql> SELECT id, title FROM faqs
@@ -106,7 +117,7 @@ mysql> SELECT id, title FROM faqs
 +----+--------------------+
 |  1 | 返品ポリシー       |
 +----+--------------------+
-1 row in set (0.023 sec)
+1 row in set (0.000 sec)
 ```
 
 次は列を足して、埋め込みを入れます。
@@ -132,7 +143,10 @@ from sentence_transformers import SentenceTransformer
 
 # 文書もクエリも、同じモデルでベクトル化する
 MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-QUERY = "返品のやり方"
+QUERIES = [
+    "買ったものをメーカーに送り返したい",
+    "色違いが届いた",
+]
 
 # MySQL の STRING_TO_VECTOR() が受け付ける形式 '[0.12,-0.03,...]' にする
 def literal(vec):
@@ -173,18 +187,21 @@ conn.commit()
 cur.execute("SELECT id, title, VECTOR_DIM(embedding) FROM faqs")
 print("dims:", cur.fetchall())
 
-# 検索クエリも同じモデルでベクトル化する
-q = model.encode([QUERY], normalize_embeddings=True)[0]
-
 # VECTOR はバイナリなので、VECTOR_TO_STRING() で数値の配列に戻してから比べる
 cur.execute("SELECT id, title, VECTOR_TO_STRING(embedding) FROM faqs")
-ranked = []
-for id_, title, s in cur.fetchall():
-    ranked.append((cosine(q, np.array(json.loads(s), dtype=np.float32)), id_, title))
+stored = [
+    (id_, title, np.array(json.loads(s), dtype=np.float32))
+    for id_, title, s in cur.fetchall()
+]
 
-# 類似度が大きい順（近い順）に出す
-for score, id_, title in sorted(ranked, reverse=True):
-    print(f"{score:.4f}  [{id_}] {title}")
+# 検索クエリも同じモデルでベクトル化し、類似度が大きい順（近い順）に出す
+for query in QUERIES:
+    q = model.encode([query], normalize_embeddings=True)[0]
+    print(f"Q: {query}")
+    ranked = [(cosine(q, vec), id_, title) for id_, title, vec in stored]
+    for score, id_, title in sorted(ranked, reverse=True):
+        print(f"{score:.4f}  [{id_}] {title}")
+    print()
 conn.close()
 ```
 
@@ -192,20 +209,26 @@ conn.close()
 
 ```text
 dims: ((1, '返品ポリシー', 384), (2, '交換手続き', 384), (3, '配送状況の確認', 384), (4, '支払い方法', 384))
-0.4119  [1] 返品ポリシー
-0.3115  [4] 支払い方法
-0.2748  [3] 配送状況の確認
-0.2611  [2] 交換手続き
+Q: 買ったものをメーカーに送り返したい
+0.5462  [1] 返品ポリシー
+0.3279  [3] 配送状況の確認
+0.2699  [4] 支払い方法
+0.2561  [2] 交換手続き
+
+Q: 色違いが届いた
+0.3801  [2] 交換手続き
+0.0490  [3] 配送状況の確認
+0.0127  [1] 返品ポリシー
+-0.0159  [4] 支払い方法
 ```
 
-数字は余弦類似度で、大きいほど近いです。HeatWave の `DISTANCE(..., 'COSINE')` は距離なので、近いほど 0 に近くなります。ここの 0.4119 とは向きが逆です。
+数字は余弦類似度で、大きいほど近いです。HeatWave の `DISTANCE(..., 'COSINE')` は距離なので、近いほど 0 に近くなります。ここの 0.5462 とは向きが逆です。
 
-| 順位 | 類似度 | 文書 | 備考 |
+| 問い合わせ | 1位 | 類似度 | `LIKE`（クエリ全文） |
 | --- | --- | --- | --- |
-| 1 | 0.4119 | 返品ポリシー | `LIKE '%返品のやり方%'` では 0 件だった行が首位 |
-| 2 | 0.3115 | 支払い方法 | 返品とは無関係だが、このモデルでは 2 位 |
-| 3 | 0.2748 | 配送状況の確認 | 同上 |
-| 4 | 0.2611 | 交換手続き | 冒頭の例では拾う想定だったが、ここでは最下位 |
+| 買ったものをメーカーに送り返したい | 返品ポリシー | 0.5462 | 0 件 |
+| 色違いが届いた | 交換手続き | 0.3801 | 0 件 |
 
-VECTOR 列に入れて近い順に並べる、までは確認できました。
-一方「交換手続きも上がる」は、この短い文とこのモデルでは成り立ちませんでした。VECTOR 列は箱で、近い順に並ぶかどうかは埋め込みモデルと入力文の話です。
+1件目は、ユーザーが「返品」と書いていないのに返品ポリシーが首位で、2位との差も開いています。2件目は交換手続きが首位で、残りは 0 付近です。どちらも `LIKE` では 0 件だった行です。
+
+VECTOR 列に埋め込みを入れて近い順に並べると、FAQ と違う言い方でも該当行が上がることが確認できました。近い順の質は埋め込みモデルと入力文次第ですが、この例では小型の多言語モデルでも、言い換えがはっきりしていれば通ります。
